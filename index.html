@@ -136,7 +136,7 @@ const PAIRS = [
   ["牛肉麵","陽春麵"],["手機殼","保護貼"],["充電器","行動電源"],["鍵盤","滑鼠"],["耳機","喇叭"],
   ["西瓜汁","葡萄汁"],["便利商店","超市"],["登山","露營"],["地瓜","南瓜"],["牛奶","優酪乳"]
 ]
-
+let lastUsedPairIndex = -1;
 // =============== 2) Firebase 初始化（請換成你的專案參數） ===============
 const firebaseConfig = {
   apiKey: "AIzaSyAspeuMvQ4VHn4DhoMZW9ittGPQrEmo5Wk",
@@ -422,13 +422,40 @@ async function hostStartOrNext(isNext){
   const playerIds = Object.keys(players);
   const n = playerIds.length;
   
-  if(n < 2) { alert(`至少需要 2 人才能開始遊戲，目前只有 ${n} 人`); return; }
+  if(n < 3) { alert(`至少需要 3 人才能開始遊戲，目前只有 ${n} 人`); return; }
   if(n > 11){ 
     if(!confirm(`目前 ${n} 人，可能太多了，建議控制在 11 人以內，仍要開始嗎？`)) return;
   }
   
-  const A = $('wordA').value.trim();
-  const B = $('wordB').value.trim();
+  let A, B;
+  
+  // ⭐ 這是新增的邏輯
+  if (isNext) {
+    // 避免連續使用相同詞語
+    let randomIndex;
+    do {
+      randomIndex = Math.floor(Math.random() * PAIRS.length);
+    } while (randomIndex === lastUsedPairIndex && PAIRS.length > 1);
+    
+    lastUsedPairIndex = randomIndex;
+    [A, B] = PAIRS[randomIndex];
+    
+    // 同時更新 UI 顯示新詞語（讓房主知道換了什麼詞）
+    $('pairSelect').value = randomIndex;
+    $('wordA').value = A;
+    $('wordB').value = B;
+  } else {
+    // 如果是「開始本輪」，使用房主設定的詞語
+    A = $('wordA').value.trim();
+    B = $('wordB').value.trim();
+    
+    // ⭐ 記錄當前使用的詞語索引
+    const currentIndex = parseInt($('pairSelect').value);
+    if (currentIndex >= 0) {
+      lastUsedPairIndex = currentIndex;
+    }
+  }
+  
   const useBlank = $('useBlank').checked;
   
   if(!A || !B) { alert('請填好兩個詞'); return; }
@@ -455,16 +482,21 @@ async function hostStartOrNext(isNext){
       }
     });
 
-    // 更新房間狀態
+    // 更新房間狀態 - 不儲存原始詞語，防止洩露
     await db.collection('rooms').doc(currentRoom).update({
       status: 'reveal',
       round: (roomData.round || 0) + 1,
-      pairA: A, 
-      pairB: B, 
       hasBlank: useBlank,
       assignments: assignments,
       updatedAt: now()
     });
+    
+    // ⭐ 如果是下一輪，給房主一個提示
+    if (isNext) {
+      setTimeout(() => {
+        alert(`已開始新一輪！\n本輪詞語：${A} / ${B}`);
+      }, 500);
+    }
     
   } catch (error) {
     console.error('開始遊戲失敗:', error);
