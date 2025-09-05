@@ -32,7 +32,6 @@
     .word{font-size:clamp(24px,8vw,40px);font-weight:900;letter-spacing:.6px;text-align:center}
     .center{display:grid;place-items:center}
     a{color:#93c5fd}
-    .debug-info{background:#1a1a2e;border:1px solid #3a3a5e;border-radius:8px;padding:8px;font-size:11px;margin-top:8px;font-family:monospace}
   </style>
   <!-- Firebase（使用 compat CDN 版本，簡單好用） -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -105,7 +104,6 @@
               <button class="btn danger" id="endGame">結束遊戲</button>
             </div>
             <div class="hint">開始/下一輪後：每位玩家的手機會顯示自己的身分與詞。</div>
-            <div class="debug-info" id="debugInfo">Debug: —</div>
           </div>
         </div>
       </div>
@@ -121,7 +119,6 @@
           <span class="badge" id="pairHint">—</span>
         </div>
         <div class="hint">⚠️ 本頁只顯示給你自己，請勿讓他人看到。</div>
-        <div class="debug-info" id="assignmentDebug">Assignment: —</div>
       </div>
     </div>
 
@@ -204,8 +201,6 @@ $('btnCreate').onclick = async()=>{
   let code = $('roomCode').value.trim().toUpperCase() || code4();
   if(code.length<2) code=code4();
   
-  debugLog(`嘗試建立房間: ${code}`);
-  
   const roomRef = db.collection('rooms').doc(code);
   const snap = await roomRef.get();
   if(snap.exists){ alert('房號已存在，請換一個'); return }
@@ -233,7 +228,6 @@ $('btnCreate').onclick = async()=>{
     updatedAt: now()
   });
   
-  debugLog(`房間 ${code} 建立成功`);
   joinRoom(code, nick);
 }
 
@@ -255,14 +249,12 @@ async function joinRoom(code, nick){
     return;
   }
   
-  debugLog(`嘗試加入房間: ${code}, 暱稱: ${nick}`);
-  
   const roomRef = db.collection('rooms').doc(code);
   const snap = await roomRef.get();
   if(!snap.exists){ alert('找不到此房號'); return }
   
   try {
-    // 進房：把自己放進 players，使用 merge 確保不覆蓋其他資料
+    // 進房：把自己放進 players
     await roomRef.update({
       [`players.${uid()}`]: { 
         name: nick, 
@@ -272,7 +264,6 @@ async function joinRoom(code, nick){
       updatedAt: now()
     });
     
-    debugLog(`成功加入房間 ${code}`);
     startRoomListener(code);
   } catch (error) {
     console.error('加入房間失敗:', error);
@@ -290,7 +281,6 @@ $('leaveRoom').onclick = async()=>{
       updatedAt: now() 
     });
     
-    debugLog(`離開房間 ${currentRoom}`);
     stopRoomListener();
     location.href = location.pathname;
   } catch (error) {
@@ -314,15 +304,13 @@ let unsub = null; let currentRoom = null; let isHost = false; let roomData = nul
 function stopRoomListener(){ 
   if(unsub){ 
     unsub(); 
-    unsub=null; 
-    debugLog('停止房間監聽');
+    unsub=null;
   } 
 }
 
 function startRoomListener(code){
   stopRoomListener(); 
   currentRoom = code;
-  debugLog(`開始監聽房間 ${code}`);
   
   unsub = db.collection('rooms').doc(code).onSnapshot(snap=>{
     if(!snap.exists){ 
@@ -334,13 +322,10 @@ function startRoomListener(code){
     roomData = snap.data();
     isHost = roomData.host === uid();
     
-    debugLog(`房間資料更新: ${Object.keys(roomData.players || {}).length} 位玩家, 狀態: ${roomData.status}`);
-    
     renderRoom();
     renderMyCard();
   }, error => {
     console.error('監聽房間失敗:', error);
-    debugLog('監聽房間失敗: ' + error.message);
   });
 }
 
@@ -379,8 +364,6 @@ function renderRoom(){
 
   // 狀態切換
   $('theEnd').style.display = roomData.status==='end'? 'block':'none';
-  
-  debugLog(`渲染完成: ${entries.length} 位玩家`);
 }
 
 function renderMyCard(){
@@ -389,10 +372,7 @@ function renderMyCard(){
   const show = roomData.status==='reveal' || roomData.status==='play';
   $('myCard').style.display = show? 'block':'none';
   
-  if(!show) {
-    debugLog('遊戲未開始，不顯示身分卡');
-    return;
-  }
+  if(!show) return;
   
   $('roundNo').textContent = roomData.round||0;
   const assignment = roomData.assignments?.[uid()];
@@ -401,8 +381,6 @@ function renderMyCard(){
     $('myWord').textContent = '等待房主開始…';
     $('myRole').textContent = '—';
     $('pairHint').textContent = '—';
-    $('assignmentDebug').textContent = 'Assignment: 無資料';
-    debugLog('沒有分配到身分');
     return;
   }
   
@@ -411,14 +389,13 @@ function renderMyCard(){
   
   // 顯示身分
   let roleText = '—';
-  if (assignment.role === 'SPY') roleText = '間諜';
-  else if (assignment.role === 'BLANK') roleText = '白板';
-  else if (assignment.role === 'CIVILIAN') roleText = '平民';
+  if (assignment.role === 'SPY') roleText = '🕵️ 間諜';
+  else if (assignment.role === 'BLANK') roleText = '⚪ 白板';
+  else if (assignment.role === 'CIVILIAN') roleText = '👤 平民';
   $('myRole').textContent = roleText;
   
   // 顯示詞庫提示
   $('pairHint').textContent = `本輪詞庫：${roomData.pairA || 'A'} / ${roomData.pairB || 'B'}`;
-  
 }
 
 // =============== 7) 房主控制：開始/下一輪/結束 ===============
@@ -431,7 +408,6 @@ $('endGame').onclick    = async()=>{
       status: 'end', 
       updatedAt: now() 
     });
-    debugLog('遊戲已結束');
   } catch (error) {
     console.error('結束遊戲失敗:', error);
   }
@@ -445,11 +421,9 @@ async function hostStartOrNext(isNext){
   const playerIds = Object.keys(players);
   const n = playerIds.length;
   
-  debugLog(`準備開始遊戲: ${n} 位玩家`);
-  
-  if(n < 4) { alert(`至少需要 4 人才能開始遊戲，目前只有 ${n} 人`); return; }
-  if(n < 8 || n > 11){ 
-    if(!confirm(`目前 ${n} 人。建議 8–11 人，仍要開始嗎？`)) return;
+  if(n < 3) { alert(`至少需要 3 人才能開始遊戲，目前只有 ${n} 人`); return; }
+  if(n > 11){ 
+    if(!confirm(`目前 ${n} 人，可能太多了，建議控制在 11 人以內，仍要開始嗎？`)) return;
   }
   
   const A = $('wordA').value.trim();
@@ -461,7 +435,11 @@ async function hostStartOrNext(isNext){
   try {
     // 準備配發身分
     const shuffled = shuffle([...playerIds]);
-    const spyCount = Math.min(2, Math.floor(n / 3)); // 最多2個間諜，但至少1個
+    
+    // 計算間諜數量 (固定2個，但如果總人數太少就調整)
+    let spyCount = 2;
+    if (n <= 4) spyCount = 1; // 4人以下只有1個間諜
+    
     const spies = shuffled.splice(0, spyCount);
     const blank = (useBlank && shuffled.length > 0) ? shuffled.shift() : null;
     
@@ -476,8 +454,6 @@ async function hostStartOrNext(isNext){
       }
     });
 
-    debugLog(`身分分配完成: ${spyCount} 間諜, ${blank ? 1 : 0} 白板, ${n - spyCount - (blank ? 1 : 0)} 平民`);
-
     // 更新房間狀態
     await db.collection('rooms').doc(currentRoom).update({
       status: 'reveal',
@@ -489,8 +465,6 @@ async function hostStartOrNext(isNext){
       updatedAt: now()
     });
     
-    debugLog('遊戲開始成功');
-    
   } catch (error) {
     console.error('開始遊戲失敗:', error);
     alert('開始遊戲失敗: ' + error.message);
@@ -499,13 +473,6 @@ async function hostStartOrNext(isNext){
 
 // 便利：結束後返回大廳
 $('backToLobby').onclick = (e)=>{ e.preventDefault(); location.href = location.pathname }
-
-// 定期清理舊房間（可選）
-setInterval(() => {
-  if (!currentRoom || !isHost) return;
-  
-  // 可以在這裡加入清理邏輯，比如刪除超過24小時的房間
-}, 60000); // 每分鐘檢查一次
 
 console.log('誰是間諜遊戲已載入');
 
