@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>誰是間諜｜行動版多人連線</title>
+  <style>
+    :root{
+      --bg:#0b1020; --panel:#11172c; --ink:#e5e7eb; --muted:#9aa3b2;
+      --acc:#22c55e; --acc2:#60a5fa; --danger:#ef4444; --warn:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 800px at 50% -10%,#1b2750,var(--bg));color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont}
+    .wrap{max-width:980px;margin:0 auto;padding:16px}
+    .card{background:var(--panel);border:1px solid #1f2846;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.35);margin:12px 0}
+    .pad{padding:16px}
+    h1{margin:8px 0 6px;font-size:clamp(20px,6vw,28px)}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .col{display:grid;gap:10px}
+    .btn{cursor:pointer;border:0;border-radius:12px;padding:10px 14px;font-weight:700;letter-spacing:.3px;background:#1a2343;color:var(--ink)}
+    .btn:hover{filter:brightness(1.06)}
+    .btn.acc{background:var(--acc);color:#06240f}
+    .btn.alt{background:var(--acc2);color:#061427}
+    .btn.ghost{background:#141b35;border:1px solid #233055}
+    .btn.danger{background:var(--danger)}
+    input,select{background:#0d1326;border:1px solid #223058;color:var(--ink);padding:10px 12px;border-radius:12px}
+    .hint{font-size:12px;color:var(--muted)}
+    .k{font-variant-numeric:tabular-nums}
+    .grid{display:grid;gap:10px}
+    .pill{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#0f162f;border:1px solid #223058;border-radius:14px;padding:8px 10px}
+    .badge{background:#0d1326;border:1px solid #1f2a4a;border-radius:999px;padding:6px 10px;font-weight:700}
+    .word{font-size:clamp(24px,8vw,40px);font-weight:900;letter-spacing:.6px;text-align:center}
+    .center{display:grid;place-items:center}
+    a{color:#93c5fd}
+  </style>
+  <!-- Firebase（使用 compat CDN 版本，簡單好用） -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card pad">
+      <h1>🕵️‍♀️ 誰是間諜｜行動版多人連線</h1>
+      <div class="hint">房主建立房間 → 分享連結 → 玩家用手機打開 → 房主開始/下一輪：每人小螢幕只顯示自己的身分與詞。</div>
+    </div>
+
+    <!-- 連線/大廳 -->
+    <div class="card pad" id="lobby">
+      <div class="grid" style="grid-template-columns:1fr;">
+        <div class="row">
+          <input id="nick" placeholder="你的暱稱（例：P3 或小明）" style="flex:1" />
+        </div>
+        <div class="row">
+          <input id="roomCode" placeholder="房號（例：ABCD）" style="width:130px" />
+          <button class="btn alt" id="btnCreate">建立房間</button>
+          <button class="btn" id="btnJoin">加入房間</button>
+        </div>
+        <div class="hint">或直接打開房主分享的連結：?room=ABCD</div>
+      </div>
+    </div>
+
+    <!-- 房間內（玩家清單 + 連結） -->
+    <div class="card pad" id="room" style="display:none">
+      <div class="row" style="justify-content:space-between">
+        <div class="row"><span class="badge">房號：<b id="roomIdTxt">—</b></span> <span class="badge">你是：<b id="iamHost">—</b></span></div>
+        <div class="row">
+          <button class="btn ghost" id="copyLink">複製連結</button>
+          <button class="btn ghost" id="leaveRoom">離開房間</button>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
+        <div class="col">
+          <b>玩家名單</b>
+          <div class="grid" id="playerList"></div>
+          <div class="hint">建議 8–11 人。房主開始前可等待大家到齊。</div>
+        </div>
+        <div class="col" id="hostPanel" style="display:none">
+          <b>房主控制台</b>
+          <div class="grid">
+            <div class="row">
+              <label class="row" style="gap:6px"><input type="checkbox" id="useBlank" checked />含白板(1人)</label>
+              <span class="badge">固定 2 間諜</span>
+            </div>
+            <div class="row">
+              <select id="pairSelect"></select>
+              <button class="btn ghost" id="randPair">隨機詞</button>
+            </div>
+            <div class="row">
+              <input id="wordA" placeholder="平民詞 A" style="flex:1"/>
+              <input id="wordB" placeholder="間諜詞 B" style="flex:1"/>
+            </div>
+            <div class="row">
+              <button class="btn acc" id="startRound">開始本輪</button>
+              <button class="btn warn" id="nextRound">下一輪（重新發牌＋新詞）</button>
+              <button class="btn danger" id="endGame">結束遊戲</button>
+            </div>
+            <div class="hint">開始/下一輪後：每位玩家的手機會顯示自己的身分與詞。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 個人身分卡（每人私人視圖） -->
+    <div class="card pad" id="myCard" style="display:none">
+      <div class="row" style="justify-content:space-between"><b>本輪你的身分</b><span class="badge k">Round <span id="roundNo">0</span></span></div>
+      <div class="col">
+        <div class="word" id="myWord">等待房主開始…</div>
+        <div class="row center" style="gap:12px">
+          <span class="badge" id="myRole">—</span>
+          <span class="badge" id="pairHint">—</span>
+        </div>
+        <div class="hint">⚠️ 本頁只顯示給你自己，請勿讓他人看到。</div>
+      </div>
+    </div>
+
+    <!-- 遊戲結束 -->
+    <div class="card pad center" id="theEnd" style="display:none">
+      <div class="word">本場已結束</div>
+      <a id="backToLobby" class="btn" style="display:inline-grid;place-items:center;width:max-content;margin-top:10px" href="#">返回大廳</a>
+    </div>
+  </div>
+
+<script>
+// =============== 1) 內建詞庫（可自行擴充） ===============
+const PAIRS = [
+  ["可樂","雪碧"],["籃球","足球"],["火鍋","燒烤"],["衛生紙","面紙"],["高鐵","台鐵"],
+  ["牛肉麵","陽春麵"],["手機殼","保護貼"],["充電器","行動電源"],["鍵盤","滑鼠"],["耳機","喇叭"],
+  ["西瓜汁","葡萄汁"],["便利商店","超市"],["登山","露營"],["地瓜","南瓜"],["牛奶","優酪乳"]
+]
+
+// =============== 2) Firebase 初始化（請換成你的專案參數） ===============
+const firebaseConfig = {
+  apiKey: "REPLACE_ME",
+  authDomain: "REPLACE_ME.firebaseapp.com",
+  projectId: "REPLACE_ME",
+  appId: "REPLACE_ME"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// =============== 3) 小工具 ===============
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+function code4(){ return Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4) }
+function uid(){ return auth.currentUser?.uid }
+function now(){ return firebase.firestore.FieldValue.serverTimestamp() }
+function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]] } return arr }
+
+// =============== 4) UI 初始 ===============
+(function initUI(){
+  const sel = $('pairSelect');
+  PAIRS.forEach((p,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=p[0]+"／"+p[1]; sel.appendChild(o) })
+  sel.value=0; $('wordA').value=PAIRS[0][0]; $('wordB').value=PAIRS[0][1];
+})();
+$('pairSelect').onchange = e=>{ const [a,b]=PAIRS[+e.target.value]; $('wordA').value=a; $('wordB').value=b }
+$('randPair').onclick = ()=>{ const i=(Math.random()*PAIRS.length)|0; $('pairSelect').value=i; const [a,b]=PAIRS[i]; $('wordA').value=a; $('wordB').value=b }
+
+// =============== 5) 匿名登入後處理 ===============
+auth.signInAnonymously().then(()=>{
+  const q = new URLSearchParams(location.search);
+  if(q.get('room')) $('roomCode').value = q.get('room').toUpperCase();
+}).catch(console.error)
+
+// =============== 6) 建立/加入房間 ===============
+$('btnCreate').onclick = async()=>{
+  const nick = $('nick').value.trim() || '玩家';
+  let code = $('roomCode').value.trim().toUpperCase() || code4();
+  if(code.length<2) code=code4();
+  const roomRef = db.collection('rooms').doc(code);
+  const snap = await roomRef.get();
+  if(snap.exists){ alert('房號已存在，請換一個'); return }
+  await roomRef.set({
+    code, host: uid(), status:'lobby', round:0,
+    createdAt: now(), updatedAt: now(),
+    players: { [uid()]: { name:nick, joinedAt: now(), ready:false } }
+  })
+  joinRoom(code, nick);
+}
+
+$('btnJoin').onclick = async()=>{
+  const code = $('roomCode').value.trim().toUpperCase();
+  const nick = $('nick').value.trim() || '玩家';
+  if(!code){ alert('請輸入房號'); return }
+  joinRoom(code, nick);
+}
+
+async function joinRoom(code, nick){
+  const roomRef = db.collection('rooms').doc(code);
+  const snap = await roomRef.get();
+  if(!snap.exists){ alert('找不到此房號'); return }
+  // 進房：把自己放進 players
+  await roomRef.set({ [`players.${uid()}`]: { name:nick, joinedAt: now(), ready:false } , updatedAt: now() }, { merge:true })
+  startRoomListener(code);
+}
+
+$('leaveRoom').onclick = async()=>{
+  if(!currentRoom) return;
+  const roomRef = db.collection('rooms').doc(currentRoom);
+  await roomRef.update({ [`players.${uid()}`]: firebase.firestore.FieldValue.delete(), updatedAt: now() })
+  stopRoomListener();
+  location.href = location.pathname;
+}
+
+$('copyLink').onclick = async()=>{
+  const url = location.origin + location.pathname + '?room=' + currentRoom;
+  await navigator.clipboard.writeText(url); alert('連結已複製：\n' + url)
+}
+
+let unsub = null; let currentRoom = null; let isHost = false; let roomData = null;
+
+function stopRoomListener(){ if(unsub){ unsub(); unsub=null } }
+
+function startRoomListener(code){
+  stopRoomListener(); currentRoom = code;
+  unsub = db.collection('rooms').doc(code).onSnapshot(snap=>{
+    if(!snap.exists){ alert('房間已被刪除'); location.href = location.pathname; return }
+    roomData = snap.data();
+    isHost = roomData.host === uid();
+    renderRoom();
+    renderMyCard();
+  })
+}
+
+function renderRoom(){
+  // 顯示房間區塊
+  $('lobby').style.display = 'none';
+  $('room').style.display  = 'block';
+  $('roomIdTxt').textContent = roomData.code;
+  $('iamHost').textContent = isHost? '房主' : '玩家';
+  $('hostPanel').style.display = isHost? 'block':'none';
+
+  // 玩家名單
+  const box = $('playerList'); box.innerHTML='';
+  const entries = Object.entries(roomData.players||{});
+  entries.forEach(([pid,info],idx)=>{
+    const div=document.createElement('div'); div.className='pill';
+    const you = pid===uid()? '（你）' : '';
+    div.innerHTML = `<div class="row"><span class="badge">${info.name||'玩家'}</span> <span class="hint">#${idx+1} ${you}</span></div>`
+    box.appendChild(div);
+  })
+
+  // 狀態切換
+  $('theEnd').style.display = roomData.status==='end'? 'block':'none';
+}
+
+function renderMyCard(){
+  const show = roomData.status==='reveal' || roomData.status==='play';
+  $('myCard').style.display = show? 'block':'none';
+  if(!show) return;
+  $('roundNo').textContent = roomData.round||0;
+  const a = roomData.assignments?.[uid()];
+  if(!a){
+    $('myWord').textContent = '等待房主開始…';
+    $('myRole').textContent = '—';
+    $('pairHint').textContent = '—';
+    return;
+  }
+  $('myWord').textContent = a.word || '（空白）';
+  $('myRole').textContent = a.role==='SPY'?'間諜':(a.role==='BLANK'?'白板':'平民');
+  $('pairHint').textContent = `本輪詞庫：A/B`; // 不透露實際另一詞，避免作弊
+}
+
+// =============== 7) 房主控制：開始/下一輪/結束 ===============
+$('startRound').onclick = ()=> hostStartOrNext(false);
+$('nextRound').onclick  = ()=> hostStartOrNext(true);
+$('endGame').onclick    = async()=>{
+  if(!confirm('結束這場遊戲？')) return;
+  await db.collection('rooms').doc(currentRoom).update({ status:'end', updatedAt: now() })
+}
+
+async function hostStartOrNext(isNext){
+  if(!isHost) return alert('只有房主可操作');
+  const n = Object.keys(roomData.players||{}).length;
+  if(n<8 || n>11){ if(!confirm(`目前 ${n} 人。建議 8–11 人，仍要開始嗎？`)) return }
+  const A = $('wordA').value.trim();
+  const B = $('wordB').value.trim();
+  const useBlank = $('useBlank').checked;
+  if(!A || !B) return alert('請填好兩個詞');
+
+  // 準備配發
+  const ids = Object.keys(roomData.players||{});
+  const shuffled = shuffle([...ids]);
+  const spies = shuffled.splice(0,2); // 固定兩名間諜
+  const blank = useBlank? shuffled.shift() : null;
+  const assignments = {};
+  ids.forEach(id=>{
+    if(spies.includes(id)) assignments[id] = { role:'SPY',   word:B };
+    else if(blank && id===blank) assignments[id] = { role:'BLANK', word:'' };
+    else assignments[id] = { role:'CIVILIAN', word:A };
+  })
+
+  await db.collection('rooms').doc(currentRoom).set({
+    status:'reveal',
+    round: (roomData.round||0) + 1,
+    pairA:A, pairB:B, hasBlank:useBlank,
+    assignments,
+    updatedAt: now()
+  }, { merge:true })
+}
+
+// 便利：結束後返回大廳
+$('backToLobby').onclick = (e)=>{ e.preventDefault(); location.href = location.pathname }
+
+</script>
+</body>
+</html>
