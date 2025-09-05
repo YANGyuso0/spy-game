@@ -166,7 +166,9 @@ function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=(Math.random()*(
 // Debug 函數
 function debugLog(msg) {
   console.log('[DEBUG]', msg);
-  if($('debugInfo')) $('debugInfo').textContent = `Debug: ${msg}`;
+  if($('debugInfo')) {
+    $('debugInfo').innerHTML = `Debug: ${msg}<br><small>目前詞庫: <span id="currentPair">${$('wordA').value} / ${$('wordB').value}</span></small>`;
+  }
 }
 
 // =============== 4) UI 初始 ===============
