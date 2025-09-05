@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>誰是間諜｜行動版多人連線</title>
+  <style>
+    .modal{
+        position:fixed; inset:0; display:none; place-items:center;
+        background:rgba(0,0,0,.65); backdrop-filter: blur(2px); z-index:9999;
+      }
+      .modal.show{ display:grid; }
+      .modal-card{
+        background:#0f162f; border:1px solid #223058; border-radius:18px;
+        padding:16px; width:min(92vw,520px); text-align:center;
+        box-shadow:0 10px 30px rgba(0,0,0,.5);
+      }
+      .modal-card img{ max-width:100%; height:auto; border-radius:12px }
+      .modal-card .title{ font-weight:900; font-size:clamp(22px,5vw,28px); margin:8px 0 12px }
+    :root{
+      --bg:#0b1020; --panel:#11172c; --ink:#e5e7eb; --muted:#9aa3b2;
+      --acc:#22c55e; --acc2:#60a5fa; --danger:#ef4444; --warn:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 800px at 50% -10%,#1b2750,var(--bg));color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont}
+    .wrap{max-width:980px;margin:0 auto;padding:16px}
+    .card{background:var(--panel);border:1px solid #1f2846;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.35);margin:12px 0}
+    .pad{padding:16px}
+    h1{margin:8px 0 6px;font-size:clamp(20px,6vw,28px)}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .col{display:grid;gap:10px}
+    .btn{cursor:pointer;border:0;border-radius:12px;padding:10px 14px;font-weight:700;letter-spacing:.3px;background:#1a2343;color:var(--ink)}
+    .btn:hover{filter:brightness(1.06)}
+    .btn.acc{background:var(--acc);color:#06240f}
+    .btn.alt{background:var(--acc2);color:#061427}
+    .btn.ghost{background:#141b35;border:1px solid #233055}
+    .btn.danger{background:var(--danger)}
+    .btn.warn{background:var(--warn);color:#241600}
+    input,select{background:#0d1326;border:1px solid #223058;color:var(--ink);padding:10px 12px;border-radius:12px}
+    .hint{font-size:12px;color:var(--muted)}
+    .k{font-variant-numeric:tabular-nums}
+    .grid{display:grid;gap:10px}
+    .pill{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#0f162f;border:1px solid #223058;border-radius:14px;padding:8px 10px}
+    .badge{background:#0d1326;border:1px solid #1f2a4a;border-radius:999px;padding:6px 10px;font-weight:700}
+    .word{font-size:clamp(24px,8vw,40px);font-weight:900;letter-spacing:.6px;text-align:center}
+    .center{display:grid;place-items:center}
+    a{color:#93c5fd}
+  </style>
+  <!-- Firebase（compat CDN） -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card pad">
+      <h1>🕵️‍♀️ 誰是間諜｜行動版多人連線</h1>
+      <div class="hint">房主建立房間 → 分享連結 → 玩家用手機打開 → 房主開始/下一輪：每人手機只顯示自己的身分與詞。</div>
+    </div>
+
+    <!-- 連線狀態顯示 -->
+    <div class="card pad" id="connectionStatus" style="display:none">
+      <div class="row">
+        <span class="badge" id="statusText">連線中...</span>
+        <span class="badge" id="userIdDisplay">用戶ID: —</span>
+      </div>
+    </div>
+
+    <!-- 大廳 -->
+    <div class="card pad" id="lobby">
+      <div class="grid" style="grid-template-columns:1fr;">
+        <div class="row">
+          <input id="nick" placeholder="你的暱稱（例：P3 或小明）" style="flex:1" />
+        </div>
+        <div class="row">
+          <input id="roomCode" placeholder="房號（例：ABCD）" style="width:130px" />
+          <button class="btn alt" id="btnCreate">建立房間</button>
+          <button class="btn" id="btnJoin">加入房間</button>
+        </div>
+        <div class="hint">或直接打開房主分享的連結：?room=ABCD</div>
+      </div>
+    </div>
+
+    <!-- 房間內 -->
+    <div class="card pad" id="room" style="display:none">
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <span class="badge">房號：<b id="roomIdTxt">—</b></span>
+          <span class="badge">你是：<b id="iamHost">—</b></span>
+        </div>
+        <div class="row">
+          <button class="btn ghost" id="copyLink">複製連結</button>
+          <button class="btn ghost" id="leaveRoom">離開房間</button>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
+        <div class="col">
+          <b>玩家名單 (<span id="playerCount">0</span> 人)</b>
+          <div class="grid" id="playerList"></div>
+          <div class="hint">建議 4–11 人。房主開始前可等待大家到齊。</div>
+        </div>
+        <div class="col" id="hostPanel" style="display:none">
+          <b>房主控制台</b>
+          <div class="grid">
+            <div class="row">
+              <label class="row" style="gap:6px"><input type="checkbox" id="useBlank" checked />含白板(1人)</label>
+              <span class="badge">固定 2 間諜</span>
+            </div>
+            <div class="row">
+              <select id="pairSelect"></select>
+              <button class="btn ghost" id="randPair">隨機詞</button>
+            </div>
+            <div class="row">
+              <input id="wordA" placeholder="平民詞 A" style="flex:1"/>
+              <input id="wordB" placeholder="間諜詞 B" style="flex:1"/>
+            </div>
+            <div class="row">
+              <button class="btn acc" id="startRound">開始本輪</button>
+              <button class="btn warn" id="nextRound">下一輪（重新發牌＋新詞）</button>
+              <button class="btn danger" id="endGame">結束遊戲</button>
+            </div>
+            <div class="hint">開始/下一輪後：每位玩家的手機會顯示自己的身分與詞（只顯示各自可見的詞）。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 個人身分卡（私人視圖） -->
+    <div class="card pad" id="myCard" style="display:none">
+      <div class="row" style="justify-content:space-between">
+        <b>本輪你的身分</b>
+        <span class="badge k">Round <span id="roundNo">0</span></span>
+      </div>
+      <div class="col">
+        <div class="word" id="myWord">等待房主開始…</div>
+        <div class="row center" style="gap:12px">
+          <span class="badge" id="myRole">—</span>
+          <span class="badge" id="pairHint">—</span>
+        </div>
+        <div class="hint">⚠️ 本頁只顯示給你自己，請勿讓他人看到。</div>
+      </div>
+    </div>
+
+    <!-- 遊戲結束 -->
+    <div class="card pad center" id="theEnd" style="display:none">
+      <div class="word">本場已結束</div>
+      <a id="backToLobby" class="btn" style="display:inline-grid;place-items:center;width:max-content;margin-top:10px" href="#">返回大廳</a>
+    </div>
+  </div>
+  <!-- 生日驚喜彈跳視窗 -->
+<div id="surpriseModal" class="modal" aria-hidden="true">
+  <div class="modal-card">
+    <div class="title">🎉 生日快樂！🎂</div>
+    <img id="surpriseImg" src="./pikachu_birthday.png" alt="Happy Birthday">
+    <div style="margin-top:12px" class="row center">
+      <button class="btn acc" id="closeSurprise">收到！</button>
+    </div>
+  </div>
+</div>
+<script>
+// =============== 1) 詞庫（可自行擴充或換成 100 組） ===============
+
+const PAIRS = [
+  ["可樂","雪碧"],["籃球","足球"],["火鍋","燒烤"],["高鐵","台鐵"],["牛肉麵","陽春麵"],
+  ["手機殼","保護貼"],["充電器","行動電源"],["鍵盤","滑鼠"],["耳機","喇叭"],["冰淇淋","刨冰"],
+  ["電風扇","冷氣"],["洗衣機","烘衣機"],["牛奶","豆漿"],["蛋糕","麵包"],["西瓜","哈密瓜"],
+  ["眼鏡","隱形眼鏡"],["外套","毛衣"],["短褲","長褲"],["雨傘","雨衣"],["地鐵","公車"],
+  ["便利商店","超市"],["麥當勞","肯德基"],["珍珠奶茶","紅茶拿鐵"],["咖啡","奶茶"],["綠茶","烏龍茶"],
+  ["口罩","面罩"],["牙刷","牙線"],["棉被","毯子"],["枕頭","抱枕"],["地瓜","馬鈴薯"],
+  ["蘋果","香蕉"],["草莓","櫻桃"],["葡萄","藍莓"],["橘子","柚子"],["番茄","小黃瓜"],
+  ["熱狗","漢堡"],["三明治","潛艇堡"],["壽司","生魚片"],["牛排","豬排"],["炒飯","炒麵"],
+  ["湯圓","元宵"],["月餅","蛋黃酥"],["粽子","飯糰"],["鍋貼","水餃"],["春捲","潤餅"],
+  ["羽毛球","網球"],["排球","棒球"],["桌球","撞球"],["跑步","健走"],["游泳","潛水"],
+  ["露營","登山"],["釣魚","划船"],["溜冰","滑雪"],["瑜伽","普拉提"],["跳舞","唱歌"],
+  ["鋼琴","小提琴"],["吉他","烏克麗麗"],["鼓","爵士鼓"],["笛子","薩克斯風"],["口琴","小號"],
+  ["漫畫","小說"],["電影","電視劇"],["新聞","雜誌"],["廣播","播客"],["網頁","APP"],
+  ["LINE","微信"],["IG","抖音"],["臉書","推特"],["郵件","簡訊"],["電話","視訊"],
+  ["機車","腳踏車"],["汽車","公車"],["火車","捷運"],["飛機","高鐵"],["渡輪","遊艇"],
+  ["紅色","橘色"],["藍色","紫色"],["綠色","黃色"],["黑色","白色"],["金色","銀色"],
+  ["鋼筆","原子筆"],["鉛筆","蠟筆"],["橡皮擦","立可白"],["筆記本","記事本"],["尺","量角器"],
+  ["電視","投影機"],["平板","筆電"],["相機","攝影機"],["音響","麥克風"],["滑鼠","觸控板"],
+  ["床","沙發"],["椅子","板凳"],["書桌","餐桌"],["衣櫃","鞋櫃"],["鏡子","窗戶"],
+  ["超人","蝙蝠俠"],["蜘蛛人","鋼鐵人"],["綠巨人","雷神"],["美少女戰士","庫洛魔法使"],["七龍珠","航海王"]
+];
+let lastUsedPairIndex = -1;
+
+// 抽下一組（避免跟上一組相同）
+function pickNextPairIndex(prevIdx) {
+  if (PAIRS.length <= 1) return 0;
+  let i;
+  do { i = Math.floor(Math.random() * PAIRS.length); } while (i === prevIdx);
+  return i;
+}
+
+// =============== 2) Firebase 初始化 ===============
+const firebaseConfig = {
+  apiKey: "AIzaSyAspeuMvQ4VHn4DhoMZW9ittGPQrEmo5Wk",
+  authDomain: "spygames-48c3a.firebaseapp.com",
+  projectId: "spygames-48c3a",
+  storageBucket: "spygames-48c3a.firebasestorage.app",
+  messagingSenderId: "1012977219665",
+  appId: "1:1012977219665:web:476a9313dd59a9e4f6a070",
+  measurementId: "G-PY0PP7D8XJ"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// =============== 3) 小工具 ===============
+const $ = id => document.getElementById(id);
+function code4(){ return Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4) }
+function uid(){ return auth.currentUser?.uid }
+function now(){ return firebase.firestore.FieldValue.serverTimestamp() }
+function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]] } return arr }
+
+// =============== 4) UI 初始 ===============
+(function initUI(){
+  const sel = $('pairSelect');
+  PAIRS.forEach((p,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=p[0]+"／"+p[1]; sel.appendChild(o) });
+  sel.value=0; $('wordA').value=PAIRS[0][0]; $('wordB').value=PAIRS[0][1];
+})();
+$('pairSelect').onchange = e=>{ const [a,b]=PAIRS[+e.target.value]; $('wordA').value=a; $('wordB').value=b }
+$('randPair').onclick = ()=>{ const i=(Math.random()*PAIRS.length)|0; $('pairSelect').value=i; const [a,b]=PAIRS[i]; $('wordA').value=a; $('wordB').value=b }
+
+// =============== 5) 匿名登入 ===============
+auth.onAuthStateChanged(user => {
+  if (user) {
+    $('connectionStatus').style.display = 'block';
+    $('statusText').textContent = '已連線';
+    $('userIdDisplay').textContent = `用戶ID: ${user.uid.slice(-6)}`;
+    const q = new URLSearchParams(location.search);
+    if(q.get('room')) {
+      $('roomCode').value = q.get('room').toUpperCase();
+      const nick = $('nick').value.trim() || '玩家';
+      joinRoom(q.get('room').toUpperCase(), nick);
+    }
+  } else {
+    auth.signInAnonymously().catch(console.error);
+  }
+});
+
+// =============== 6) 建立/加入房間 ===============
+$('btnCreate').onclick = async()=>{
+  if (!auth.currentUser) { alert('請等待登入完成...'); return; }
+  const nick = $('nick').value.trim() || '玩家';
+  let code = $('roomCode').value.trim().toUpperCase() || code4();
+  if(code.length<2) code=code4();
+
+  const roomRef = db.collection('rooms').doc(code);
+  const snap = await roomRef.get();
+  if(snap.exists){ alert('房號已存在，請換一個'); return }
+
+  await roomRef.set({
+    code, host: uid(), status:'lobby', round:0,
+    createdAt: now(), updatedAt: now(),
+    players: {}
+  });
+  await roomRef.update({
+    [`players.${uid()}`]: { name:nick, joinedAt: now(), ready:false },
+    updatedAt: now()
+  });
+  joinRoom(code, nick);
+};
+
+$('btnJoin').onclick = async()=>{
+  if (!auth.currentUser) { alert('請等待登入完成...'); return; }
+  const code = $('roomCode').value.trim().toUpperCase();
+  const nick = $('nick').value.trim() || '玩家';
+  if(!code){ alert('請輸入房號'); return }
+  joinRoom(code, nick);
+};
+
+async function joinRoom(code, nick){
+  if (!auth.currentUser) return;
+  const roomRef = db.collection('rooms').doc(code);
+  const snap = await roomRef.get();
+  if(!snap.exists){ alert('找不到此房號'); return }
+  try {
+    await roomRef.update({
+      [`players.${uid()}`]: { name:nick, joinedAt: now(), ready:false },
+      updatedAt: now()
+    });
+    startRoomListener(code);
+  } catch (error) {
+    console.error('加入房間失敗:', error);
+    alert('加入房間失敗: ' + error.message);
+  }
+}
+
+$('leaveRoom').onclick = async()=>{
+  if(!currentRoom || !auth.currentUser) return;
+  try {
+    const roomRef = db.collection('rooms').doc(currentRoom);
+    await roomRef.update({ [`players.${uid()}`]: firebase.firestore.FieldValue.delete(), updatedAt: now() });
+    stopRoomListener();
+    location.href = location.pathname;
+  } catch (error) {
+    console.error('離開房間失敗:', error);
+  }
+};
+
+$('copyLink').onclick = async()=>{
+  const url = location.origin + location.pathname + '?room=' + currentRoom;
+  try { await navigator.clipboard.writeText(url); alert('連結已複製：\n' + url); }
+  catch { prompt('請手動複製連結:', url); }
+};
+
+let unsub = null; let currentRoom = null; let isHost = false; let roomData = null;
+
+function stopRoomListener(){ if(unsub){ unsub(); unsub=null; } }
+
+function startRoomListener(code){
+  stopRoomListener(); currentRoom = code;
+  unsub = db.collection('rooms').doc(code).onSnapshot(snap=>{
+    if(!snap.exists){ alert('房間已被刪除'); location.href = location.pathname; return; }
+    roomData = snap.data();
+    isHost = roomData.host === uid();
+
+    // ✨ 從雲端同步上一組詞的索引，保證下一輪不重覆
+    lastUsedPairIndex = typeof roomData.pairIndex === 'number' ? roomData.pairIndex : -1;
+
+    renderRoom();
+    renderMyCard();
+    maybeShowSurprise();   // 🎂 第10回合自動彈出生日圖
+  }, error => console.error('監聽房間失敗:', error));
+}
+
+function renderRoom(){
+  if (!roomData) return;
+  $('lobby').style.display = 'none';
+  $('room').style.display  = 'block';
+  $('roomIdTxt').textContent = roomData.code;
+  $('iamHost').textContent = isHost? '房主' : '玩家';
+  $('hostPanel').style.display = isHost? 'block':'none';
+
+  const box = $('playerList'); box.innerHTML='';
+  const players = roomData.players || {};
+  const entries = Object.entries(players);
+  $('playerCount').textContent = entries.length;
+
+  entries.forEach(([pid,info],idx)=>{
+    const div=document.createElement('div'); div.className='pill';
+    const you = pid===uid()? '（你）' : '';
+    const hostMark = pid===roomData.host ? '👑' : '';
+    div.innerHTML = `<div class="row"><span class="badge">${info.name||'玩家'}</span> <span class="hint">#${idx+1} ${hostMark}${you}</span></div>`;
+    box.appendChild(div);
+  });
+
+  $('theEnd').style.display = roomData.status==='end'? 'block':'none';
+}
+
+function renderMyCard(){
+  if (!roomData || !auth.currentUser) return;
+  const show = roomData.status==='reveal' || roomData.status==='play';
+  $('myCard').style.display = show? 'block':'none';
+  if(!show) return;
+
+  $('roundNo').textContent = roomData.round||0;
+  const assignment = roomData.assignments?.[uid()];
+  if(!assignment){
+    $('myWord').textContent = '等待房主開始…';
+    $('myRole').textContent = '—';
+    $('pairHint').textContent = '—';
+    return;
+  }
+  $('myWord').textContent = assignment.word || '（空白）';
+  $('myRole').textContent =
+    assignment.role === 'SPY' ? '🕵️ 間諜' :
+    assignment.role === 'BLANK' ? '⚪ 白板' : '👤 平民';
+  // 不顯示 A/B 詞庫，避免作弊
+  $('pairHint').textContent = '_';
+}
+
+// =============== 🎂 生日驚喜設定 ===============
+const SURPRISE_ROUND = 10;  // 第幾回合觸發
+
+function showSurprise(){
+  $('surpriseModal').classList.add('show');
+  $('surpriseModal').setAttribute('aria-hidden','false');
+}
+function hideSurprise(){
+  $('surpriseModal').classList.remove('show');
+  $('surpriseModal').setAttribute('aria-hidden','true');
+}
+$('closeSurprise').onclick = hideSurprise;
+
+// 每個人只彈一次：用 localStorage 記錄
+function maybeShowSurprise(){
+  if (!roomData) return;
+  const shouldShow =
+    (roomData.round === SURPRISE_ROUND) &&
+    (roomData.status === 'reveal' || roomData.status === 'play');
+  if (!shouldShow) return;
+
+  const key = `surprise:${currentRoom}:${SURPRISE_ROUND}`;
+  if (!localStorage.getItem(key)) {
+    localStorage.setItem(key, '1');
+    showSurprise();
+  }
+}
+
+// =============== 7) 房主控制：開始/下一輪/結束 ===============
+$('startRound').onclick = ()=> hostStartOrNext(false);
+$('nextRound').onclick  = ()=> hostStartOrNext(true);
+$('endGame').onclick    = async()=>{
+  if(!confirm('結束這場遊戲？')) return;
+  try {
+    await db.collection('rooms').doc(currentRoom).update({ status:'end', updatedAt: now() });
+  } catch (error) { console.error('結束遊戲失敗:', error); }
+};
+
+async function hostStartOrNext(isNext){
+  if(!isHost) { alert('只有房主可操作'); return; }
+  if(!roomData || !currentRoom) return;
+
+  const players = roomData.players || {};
+  const playerIds = Object.keys(players);
+  const n = playerIds.length;
+  if(n < 2) { alert(`至少需要 2 人，目前 ${n} 人`); return; }
+  if(n > 11 && !confirm(`目前 ${n} 人，建議不超過 11 人，仍要開始嗎？`)) return;
+
+  let A, B, pairIndex = lastUsedPairIndex;
+
+  if (isNext) {
+    // ✅ 下一輪一定換詞：避開上一組
+    pairIndex = pickNextPairIndex(lastUsedPairIndex);
+    [A, B] = PAIRS[pairIndex];
+    // 同步房主面板
+    $('pairSelect').value = String(pairIndex);
+    $('wordA').value = A;
+    $('wordB').value = B;
+  } else {
+    // ✅ 開始本輪：使用房主面板目前的詞
+    A = $('wordA').value.trim();
+    B = $('wordB').value.trim();
+    const currentIndex = parseInt($('pairSelect').value, 10);
+    if (!Number.isNaN(currentIndex)) pairIndex = currentIndex;
+  }
+
+  const useBlank = $('useBlank').checked;
+  if(!A || !B) { alert('請填好兩個詞'); return; }
+
+  // 配發身分
+  const shuffled = shuffle([...playerIds]);
+  let spyCount = n <= 4 ? 1 : 2;    // 4人及以下：1 間諜；否則 2
+  const spies = shuffled.splice(0, spyCount);
+  const blank = (useBlank && shuffled.length > 0) ? shuffled.shift() : null;
+
+  const assignments = {};
+  playerIds.forEach(id => {
+    if(spies.includes(id)) assignments[id] = { role:'SPY',    word:B };
+    else if(blank && id===blank) assignments[id] = { role:'BLANK',  word:'' };
+    else assignments[id] = { role:'CIVILIAN', word:A };
+  });
+
+  // ✅ 寫回 pairIndex（只存索引，不存詞本身）
+  await db.collection('rooms').doc(currentRoom).update({
+    status:'reveal',
+    round:(roomData.round || 0) + 1,
+    hasBlank: useBlank,
+    assignments,
+    pairIndex,                 // 只存索引，避免洩漏詞
+    updatedAt: now()
+  });
+
+  lastUsedPairIndex = pairIndex;    // 本地同步
+}
+
+// 便利：返回大廳
+$('backToLobby').onclick = (e)=>{ e.preventDefault(); location.href = location.pathname }
+</script>
+</body>
+</html>
