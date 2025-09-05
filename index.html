@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>誰是間諜｜行動版多人連線</title>
   <style>
+    .modal{
+        position:fixed; inset:0; display:none; place-items:center;
+        background:rgba(0,0,0,.65); backdrop-filter: blur(2px); z-index:9999;
+      }
+      .modal.show{ display:grid; }
+      .modal-card{
+        background:#0f162f; border:1px solid #223058; border-radius:18px;
+        padding:16px; width:min(92vw,520px); text-align:center;
+        box-shadow:0 10px 30px rgba(0,0,0,.5);
+      }
+      .modal-card img{ max-width:100%; height:auto; border-radius:12px }
+      .modal-card .title{ font-weight:900; font-size:clamp(22px,5vw,28px); margin:8px 0 12px }
     :root{
       --bg:#0b1020; --panel:#11172c; --ink:#e5e7eb; --muted:#9aa3b2;
       --acc:#22c55e; --acc2:#60a5fa; --danger:#ef4444; --warn:#f59e0b;
@@ -135,7 +147,16 @@
       <a id="backToLobby" class="btn" style="display:inline-grid;place-items:center;width:max-content;margin-top:10px" href="#">返回大廳</a>
     </div>
   </div>
-
+  <!-- 生日驚喜彈跳視窗 -->
+<div id="surpriseModal" class="modal" aria-hidden="true">
+  <div class="modal-card">
+    <div class="title">🎉 生日快樂！🎂</div>
+    <img id="surpriseImg" src="./pikachu_birthday.png" alt="Happy Birthday">
+    <div style="margin-top:12px" class="row center">
+      <button class="btn acc" id="closeSurprise">收到！</button>
+    </div>
+  </div>
+</div>
 <script>
 // =============== 1) 詞庫（可自行擴充或換成 100 組） ===============
 
@@ -300,6 +321,7 @@ function startRoomListener(code){
 
     renderRoom();
     renderMyCard();
+    maybeShowSurprise();   // 🎂 第10回合自動彈出生日圖
   }, error => console.error('監聽房間失敗:', error));
 }
 
@@ -346,7 +368,35 @@ function renderMyCard(){
     assignment.role === 'SPY' ? '🕵️ 間諜' :
     assignment.role === 'BLANK' ? '⚪ 白板' : '👤 平民';
   // 不顯示 A/B 詞庫，避免作弊
-  $('pairHint').textContent = '—';
+  $('pairHint').textContent = '_';
+}
+
+// =============== 🎂 生日驚喜設定 ===============
+const SURPRISE_ROUND = 10;  // 第幾回合觸發
+
+function showSurprise(){
+  $('surpriseModal').classList.add('show');
+  $('surpriseModal').setAttribute('aria-hidden','false');
+}
+function hideSurprise(){
+  $('surpriseModal').classList.remove('show');
+  $('surpriseModal').setAttribute('aria-hidden','true');
+}
+$('closeSurprise').onclick = hideSurprise;
+
+// 每個人只彈一次：用 localStorage 記錄
+function maybeShowSurprise(){
+  if (!roomData) return;
+  const shouldShow =
+    (roomData.round === SURPRISE_ROUND) &&
+    (roomData.status === 'reveal' || roomData.status === 'play');
+  if (!shouldShow) return;
+
+  const key = `surprise:${currentRoom}:${SURPRISE_ROUND}`;
+  if (!localStorage.getItem(key)) {
+    localStorage.setItem(key, '1');
+    showSurprise();
+  }
 }
 
 // =============== 7) 房主控制：開始/下一輪/結束 ===============
