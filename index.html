@@ -163,14 +163,6 @@ function uid(){ return auth.currentUser?.uid }
 function now(){ return firebase.firestore.FieldValue.serverTimestamp() }
 function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]] } return arr }
 
-// Debug 函數
-function debugLog(msg) {
-  console.log('[DEBUG]', msg);
-  if($('debugInfo')) {
-    $('debugInfo').innerHTML = `Debug: ${msg}<br><small>目前詞庫: <span id="currentPair">${$('wordA').value} / ${$('wordB').value}</span></small>`;
-  }
-}
-
 // =============== 4) UI 初始 ===============
 (function initUI(){
   const sel = $('pairSelect');
@@ -426,12 +418,7 @@ function renderMyCard(){
   
   // 顯示詞庫提示
   $('pairHint').textContent = `本輪詞庫：${roomData.pairA || 'A'} / ${roomData.pairB || 'B'}`;
-  
-  // Debug 資訊
-  $('assignmentDebug').textContent = `Assignment: ${JSON.stringify(assignment)}`;
-  
-  debugLog(`身分渲染: ${roleText}, 詞: ${assignment.word}`);
-}
+
 
 // =============== 7) 房主控制：開始/下一輪/結束 ===============
 $('startRound').onclick = ()=> hostStartOrNext(false);
@@ -459,7 +446,7 @@ async function hostStartOrNext(isNext){
   
   debugLog(`準備開始遊戲: ${n} 位玩家`);
   
-  if(n < 4) { alert(`至少需要 4 人才能開始遊戲，目前只有 ${n} 人`); return; }
+  if(n < 2) { alert(`至少需要 2 人才能開始遊戲，目前只有 ${n} 人`); return; }
   if(n < 8 || n > 11){ 
     if(!confirm(`目前 ${n} 人。建議 8–11 人，仍要開始嗎？`)) return;
   }
