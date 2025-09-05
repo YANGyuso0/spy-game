@@ -32,6 +32,7 @@
     .word{font-size:clamp(24px,8vw,40px);font-weight:900;letter-spacing:.6px;text-align:center}
     .center{display:grid;place-items:center}
     a{color:#93c5fd}
+    .debug-info{background:#1a1a2e;border:1px solid #3a3a5e;border-radius:8px;padding:8px;font-size:11px;margin-top:8px;font-family:monospace}
   </style>
   <!-- Firebase（使用 compat CDN 版本，簡單好用） -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -43,6 +44,14 @@
     <div class="card pad">
       <h1>🕵️‍♀️ 誰是間諜｜行動版多人連線</h1>
       <div class="hint">房主建立房間 → 分享連結 → 玩家用手機打開 → 房主開始/下一輪：每人小螢幕只顯示自己的身分與詞。</div>
+    </div>
+
+    <!-- 連線狀態顯示 -->
+    <div class="card pad" id="connectionStatus" style="display:none">
+      <div class="row">
+        <span class="badge" id="statusText">連線中...</span>
+        <span class="badge" id="userIdDisplay">用戶ID: —</span>
+      </div>
     </div>
 
     <!-- 連線/大廳 -->
@@ -71,9 +80,9 @@
       </div>
       <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
         <div class="col">
-          <b>玩家名單</b>
+          <b>玩家名單 (<span id="playerCount">0</span> 人)</b>
           <div class="grid" id="playerList"></div>
-          <div class="hint">建議 8–11 人。房主開始前可等待大家到齊。</div>
+          <div class="hint">建議 4–11 人。房主開始前可等待大家到齊。</div>
         </div>
         <div class="col" id="hostPanel" style="display:none">
           <b>房主控制台</b>
@@ -96,6 +105,7 @@
               <button class="btn danger" id="endGame">結束遊戲</button>
             </div>
             <div class="hint">開始/下一輪後：每位玩家的手機會顯示自己的身分與詞。</div>
+            <div class="debug-info" id="debugInfo">Debug: —</div>
           </div>
         </div>
       </div>
@@ -111,6 +121,7 @@
           <span class="badge" id="pairHint">—</span>
         </div>
         <div class="hint">⚠️ 本頁只顯示給你自己，請勿讓他人看到。</div>
+        <div class="debug-info" id="assignmentDebug">Assignment: —</div>
       </div>
     </div>
 
@@ -152,6 +163,12 @@ function uid(){ return auth.currentUser?.uid }
 function now(){ return firebase.firestore.FieldValue.serverTimestamp() }
 function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]] } return arr }
 
+// Debug 函數
+function debugLog(msg) {
+  console.log('[DEBUG]', msg);
+  if($('debugInfo')) $('debugInfo').textContent = `Debug: ${msg}`;
+}
+
 // =============== 4) UI 初始 ===============
 (function initUI(){
   const sel = $('pairSelect');
@@ -162,28 +179,76 @@ $('pairSelect').onchange = e=>{ const [a,b]=PAIRS[+e.target.value]; $('wordA').v
 $('randPair').onclick = ()=>{ const i=(Math.random()*PAIRS.length)|0; $('pairSelect').value=i; const [a,b]=PAIRS[i]; $('wordA').value=a; $('wordB').value=b }
 
 // =============== 5) 匿名登入後處理 ===============
-auth.signInAnonymously().then(()=>{
-  const q = new URLSearchParams(location.search);
-  if(q.get('room')) $('roomCode').value = q.get('room').toUpperCase();
-}).catch(console.error)
+auth.onAuthStateChanged(user => {
+  if (user) {
+    console.log('用戶已登入:', user.uid);
+    $('connectionStatus').style.display = 'block';
+    $('statusText').textContent = '已連線';
+    $('userIdDisplay').textContent = `用戶ID: ${user.uid.slice(-6)}`;
+    
+    const q = new URLSearchParams(location.search);
+    if(q.get('room')) {
+      $('roomCode').value = q.get('room').toUpperCase();
+      // 自動加入房間
+      const nick = $('nick').value.trim() || '玩家';
+      joinRoom(q.get('room').toUpperCase(), nick);
+    }
+  } else {
+    console.log('用戶未登入，開始匿名登入...');
+    auth.signInAnonymously().catch(console.error);
+  }
+});
 
 // =============== 6) 建立/加入房間 ===============
 $('btnCreate').onclick = async()=>{
+  if (!auth.currentUser) {
+    alert('請等待登入完成...');
+    return;
+  }
+  
   const nick = $('nick').value.trim() || '玩家';
   let code = $('roomCode').value.trim().toUpperCase() || code4();
   if(code.length<2) code=code4();
+  
+  debugLog(`嘗試建立房間: ${code}`);
+  
   const roomRef = db.collection('rooms').doc(code);
   const snap = await roomRef.get();
   if(snap.exists){ alert('房號已存在，請換一個'); return }
-  await roomRef.set({
-    code, host: uid(), status:'lobby', round:0,
-    createdAt: now(), updatedAt: now(),
-    players: { [uid()]: { name:nick, joinedAt: now(), ready:false } }
-  })
+  
+  const initialData = {
+    code, 
+    host: uid(), 
+    status: 'lobby', 
+    round: 0,
+    createdAt: now(), 
+    updatedAt: now(),
+    players: {}
+  };
+  
+  // 先建立空的房間
+  await roomRef.set(initialData);
+  
+  // 然後加入自己
+  await roomRef.update({
+    [`players.${uid()}`]: { 
+      name: nick, 
+      joinedAt: now(), 
+      ready: false 
+    },
+    updatedAt: now()
+  });
+  
+  debugLog(`房間 ${code} 建立成功`);
   joinRoom(code, nick);
 }
 
 $('btnJoin').onclick = async()=>{
+  if (!auth.currentUser) {
+    alert('請等待登入完成...');
+    return;
+  }
+  
   const code = $('roomCode').value.trim().toUpperCase();
   const nick = $('nick').value.trim() || '玩家';
   if(!code){ alert('請輸入房號'); return }
@@ -191,43 +256,103 @@ $('btnJoin').onclick = async()=>{
 }
 
 async function joinRoom(code, nick){
+  if (!auth.currentUser) {
+    console.error('用戶未登入');
+    return;
+  }
+  
+  debugLog(`嘗試加入房間: ${code}, 暱稱: ${nick}`);
+  
   const roomRef = db.collection('rooms').doc(code);
   const snap = await roomRef.get();
   if(!snap.exists){ alert('找不到此房號'); return }
-  // 進房：把自己放進 players
-  await roomRef.set({ [`players.${uid()}`]: { name:nick, joinedAt: now(), ready:false } , updatedAt: now() }, { merge:true })
-  startRoomListener(code);
+  
+  try {
+    // 進房：把自己放進 players，使用 merge 確保不覆蓋其他資料
+    await roomRef.update({
+      [`players.${uid()}`]: { 
+        name: nick, 
+        joinedAt: now(), 
+        ready: false 
+      },
+      updatedAt: now()
+    });
+    
+    debugLog(`成功加入房間 ${code}`);
+    startRoomListener(code);
+  } catch (error) {
+    console.error('加入房間失敗:', error);
+    alert('加入房間失敗: ' + error.message);
+  }
 }
 
 $('leaveRoom').onclick = async()=>{
-  if(!currentRoom) return;
-  const roomRef = db.collection('rooms').doc(currentRoom);
-  await roomRef.update({ [`players.${uid()}`]: firebase.firestore.FieldValue.delete(), updatedAt: now() })
-  stopRoomListener();
-  location.href = location.pathname;
+  if(!currentRoom || !auth.currentUser) return;
+  
+  try {
+    const roomRef = db.collection('rooms').doc(currentRoom);
+    await roomRef.update({ 
+      [`players.${uid()}`]: firebase.firestore.FieldValue.delete(), 
+      updatedAt: now() 
+    });
+    
+    debugLog(`離開房間 ${currentRoom}`);
+    stopRoomListener();
+    location.href = location.pathname;
+  } catch (error) {
+    console.error('離開房間失敗:', error);
+  }
 }
 
 $('copyLink').onclick = async()=>{
   const url = location.origin + location.pathname + '?room=' + currentRoom;
-  await navigator.clipboard.writeText(url); alert('連結已複製：\n' + url)
+  try {
+    await navigator.clipboard.writeText(url); 
+    alert('連結已複製：\n' + url);
+  } catch (error) {
+    // 備用方案
+    prompt('請手動複製連結:', url);
+  }
 }
 
 let unsub = null; let currentRoom = null; let isHost = false; let roomData = null;
 
-function stopRoomListener(){ if(unsub){ unsub(); unsub=null } }
+function stopRoomListener(){ 
+  if(unsub){ 
+    unsub(); 
+    unsub=null; 
+    debugLog('停止房間監聽');
+  } 
+}
 
 function startRoomListener(code){
-  stopRoomListener(); currentRoom = code;
+  stopRoomListener(); 
+  currentRoom = code;
+  debugLog(`開始監聽房間 ${code}`);
+  
   unsub = db.collection('rooms').doc(code).onSnapshot(snap=>{
-    if(!snap.exists){ alert('房間已被刪除'); location.href = location.pathname; return }
+    if(!snap.exists){ 
+      alert('房間已被刪除'); 
+      location.href = location.pathname; 
+      return;
+    }
+    
     roomData = snap.data();
     isHost = roomData.host === uid();
+    
+    debugLog(`房間資料更新: ${Object.keys(roomData.players || {}).length} 位玩家, 狀態: ${roomData.status}`);
+    
     renderRoom();
     renderMyCard();
-  })
+  }, error => {
+    console.error('監聽房間失敗:', error);
+    debugLog('監聽房間失敗: ' + error.message);
+  });
 }
 
 function renderRoom(){
+  if (!roomData) return;
+  
   // 顯示房間區塊
   $('lobby').style.display = 'none';
   $('room').style.display  = 'block';
@@ -236,34 +361,74 @@ function renderRoom(){
   $('hostPanel').style.display = isHost? 'block':'none';
 
   // 玩家名單
-  const box = $('playerList'); box.innerHTML='';
-  const entries = Object.entries(roomData.players||{});
+  const box = $('playerList'); 
+  box.innerHTML='';
+  const players = roomData.players || {};
+  const entries = Object.entries(players);
+  
+  // 更新玩家數量
+  $('playerCount').textContent = entries.length;
+  
   entries.forEach(([pid,info],idx)=>{
-    const div=document.createElement('div'); div.className='pill';
+    const div=document.createElement('div'); 
+    div.className='pill';
     const you = pid===uid()? '（你）' : '';
-    div.innerHTML = `<div class="row"><span class="badge">${info.name||'玩家'}</span> <span class="hint">#${idx+1} ${you}</span></div>`
+    const hostMark = pid===roomData.host ? '👑' : '';
+    div.innerHTML = `
+      <div class="row">
+        <span class="badge">${info.name||'玩家'}</span> 
+        <span class="hint">#${idx+1} ${hostMark}${you}</span>
+      </div>
+    `;
     box.appendChild(div);
-  })
+  });
 
   // 狀態切換
   $('theEnd').style.display = roomData.status==='end'? 'block':'none';
+  
+  debugLog(`渲染完成: ${entries.length} 位玩家`);
 }
 
 function renderMyCard(){
+  if (!roomData || !auth.currentUser) return;
+  
   const show = roomData.status==='reveal' || roomData.status==='play';
   $('myCard').style.display = show? 'block':'none';
-  if(!show) return;
+  
+  if(!show) {
+    debugLog('遊戲未開始，不顯示身分卡');
+    return;
+  }
+  
   $('roundNo').textContent = roomData.round||0;
-  const a = roomData.assignments?.[uid()];
-  if(!a){
+  const assignment = roomData.assignments?.[uid()];
+  
+  if(!assignment){
     $('myWord').textContent = '等待房主開始…';
     $('myRole').textContent = '—';
     $('pairHint').textContent = '—';
+    $('assignmentDebug').textContent = 'Assignment: 無資料';
+    debugLog('沒有分配到身分');
     return;
   }
-  $('myWord').textContent = a.word || '（空白）';
-  $('myRole').textContent = a.role==='SPY'?'間諜':(a.role==='BLANK'?'白板':'平民');
-  $('pairHint').textContent = `本輪詞庫：A/B`; // 不透露實際另一詞，避免作弊
+  
+  // 顯示詞語
+  $('myWord').textContent = assignment.word || '（空白）';
+  
+  // 顯示身分
+  let roleText = '—';
+  if (assignment.role === 'SPY') roleText = '間諜';
+  else if (assignment.role === 'BLANK') roleText = '白板';
+  else if (assignment.role === 'CIVILIAN') roleText = '平民';
+  $('myRole').textContent = roleText;
+  
+  // 顯示詞庫提示
+  $('pairHint').textContent = `本輪詞庫：${roomData.pairA || 'A'} / ${roomData.pairB || 'B'}`;
+  
+  // Debug 資訊
+  $('assignmentDebug').textContent = `Assignment: ${JSON.stringify(assignment)}`;
+  
+  debugLog(`身分渲染: ${roleText}, 詞: ${assignment.word}`);
 }
 
 // =============== 7) 房主控制：開始/下一輪/結束 ===============
@@ -271,41 +436,88 @@ $('startRound').onclick = ()=> hostStartOrNext(false);
 $('nextRound').onclick  = ()=> hostStartOrNext(true);
 $('endGame').onclick    = async()=>{
   if(!confirm('結束這場遊戲？')) return;
-  await db.collection('rooms').doc(currentRoom).update({ status:'end', updatedAt: now() })
+  try {
+    await db.collection('rooms').doc(currentRoom).update({ 
+      status: 'end', 
+      updatedAt: now() 
+    });
+    debugLog('遊戲已結束');
+  } catch (error) {
+    console.error('結束遊戲失敗:', error);
+  }
 }
 
 async function hostStartOrNext(isNext){
-  if(!isHost) return alert('只有房主可操作');
-  const n = Object.keys(roomData.players||{}).length;
-  if(n<8 || n>11){ if(!confirm(`目前 ${n} 人。建議 8–11 人，仍要開始嗎？`)) return }
+  if(!isHost) { alert('只有房主可操作'); return; }
+  if(!roomData || !currentRoom) return;
+  
+  const players = roomData.players || {};
+  const playerIds = Object.keys(players);
+  const n = playerIds.length;
+  
+  debugLog(`準備開始遊戲: ${n} 位玩家`);
+  
+  if(n < 4) { alert(`至少需要 4 人才能開始遊戲，目前只有 ${n} 人`); return; }
+  if(n < 8 || n > 11){ 
+    if(!confirm(`目前 ${n} 人。建議 8–11 人，仍要開始嗎？`)) return;
+  }
+  
   const A = $('wordA').value.trim();
   const B = $('wordB').value.trim();
   const useBlank = $('useBlank').checked;
-  if(!A || !B) return alert('請填好兩個詞');
+  
+  if(!A || !B) { alert('請填好兩個詞'); return; }
 
-  // 準備配發
-  const ids = Object.keys(roomData.players||{});
-  const shuffled = shuffle([...ids]);
-  const spies = shuffled.splice(0,2); // 固定兩名間諜
-  const blank = useBlank? shuffled.shift() : null;
-  const assignments = {};
-  ids.forEach(id=>{
-    if(spies.includes(id)) assignments[id] = { role:'SPY',   word:B };
-    else if(blank && id===blank) assignments[id] = { role:'BLANK', word:'' };
-    else assignments[id] = { role:'CIVILIAN', word:A };
-  })
+  try {
+    // 準備配發身分
+    const shuffled = shuffle([...playerIds]);
+    const spyCount = Math.min(2, Math.floor(n / 3)); // 最多2個間諜，但至少1個
+    const spies = shuffled.splice(0, spyCount);
+    const blank = (useBlank && shuffled.length > 0) ? shuffled.shift() : null;
+    
+    const assignments = {};
+    playerIds.forEach(id => {
+      if(spies.includes(id)) {
+        assignments[id] = { role: 'SPY', word: B };
+      } else if(blank && id === blank) {
+        assignments[id] = { role: 'BLANK', word: '' };
+      } else {
+        assignments[id] = { role: 'CIVILIAN', word: A };
+      }
+    });
 
-  await db.collection('rooms').doc(currentRoom).set({
-    status:'reveal',
-    round: (roomData.round||0) + 1,
-    pairA:A, pairB:B, hasBlank:useBlank,
-    assignments,
-    updatedAt: now()
-  }, { merge:true })
+    debugLog(`身分分配完成: ${spyCount} 間諜, ${blank ? 1 : 0} 白板, ${n - spyCount - (blank ? 1 : 0)} 平民`);
+
+    // 更新房間狀態
+    await db.collection('rooms').doc(currentRoom).update({
+      status: 'reveal',
+      round: (roomData.round || 0) + 1,
+      pairA: A, 
+      pairB: B, 
+      hasBlank: useBlank,
+      assignments: assignments,
+      updatedAt: now()
+    });
+    
+    debugLog('遊戲開始成功');
+    
+  } catch (error) {
+    console.error('開始遊戲失敗:', error);
+    alert('開始遊戲失敗: ' + error.message);
+  }
 }
 
 // 便利：結束後返回大廳
 $('backToLobby').onclick = (e)=>{ e.preventDefault(); location.href = location.pathname }
+
+// 定期清理舊房間（可選）
+setInterval(() => {
+  if (!currentRoom || !isHost) return;
+  
+  // 可以在這裡加入清理邏輯，比如刪除超過24小時的房間
+}, 60000); // 每分鐘檢查一次
+
+console.log('誰是間諜遊戲已載入');
 
 </script>
 </body>
