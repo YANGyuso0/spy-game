@@ -418,7 +418,8 @@ function renderMyCard(){
   
   // 顯示詞庫提示
   $('pairHint').textContent = `本輪詞庫：${roomData.pairA || 'A'} / ${roomData.pairB || 'B'}`;
-
+  
+}
 
 // =============== 7) 房主控制：開始/下一輪/結束 ===============
 $('startRound').onclick = ()=> hostStartOrNext(false);
@@ -446,7 +447,7 @@ async function hostStartOrNext(isNext){
   
   debugLog(`準備開始遊戲: ${n} 位玩家`);
   
-  if(n < 2) { alert(`至少需要 2 人才能開始遊戲，目前只有 ${n} 人`); return; }
+  if(n < 4) { alert(`至少需要 4 人才能開始遊戲，目前只有 ${n} 人`); return; }
   if(n < 8 || n > 11){ 
     if(!confirm(`目前 ${n} 人。建議 8–11 人，仍要開始嗎？`)) return;
   }
@@ -506,7 +507,7 @@ setInterval(() => {
   // 可以在這裡加入清理邏輯，比如刪除超過24小時的房間
 }, 60000); // 每分鐘檢查一次
 
-console.log('誰是間諜遊戲已載入');}
+console.log('誰是間諜遊戲已載入');
 
 </script>
 </body>
